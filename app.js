@@ -75,6 +75,16 @@ async function ensureDatabaseConnection(req, res, next) {
   }
 }
 
+function ensurePersistentDatabaseConnection(req, res, next) {
+  connectToDatabase({ allowMemoryFallback: false })
+    .then(() => {
+      next()
+    })
+    .catch((error) => {
+      next(error)
+    })
+}
+
 const app = express()
 
 app.use(cors(buildCorsOptions()))
@@ -104,7 +114,7 @@ app.get('/api/quiz', (req, res) => {
   })
 })
 
-app.post('/api/auth/signup', ensureDatabaseConnection, async (req, res) => {
+app.post('/api/auth/signup', ensurePersistentDatabaseConnection, async (req, res) => {
   const { name = '', email = '', password = '' } = req.body || {}
   const validationMessage = validateAuthInput(
     { name, email, password },
@@ -137,7 +147,7 @@ app.post('/api/auth/signup', ensureDatabaseConnection, async (req, res) => {
   })
 })
 
-app.post('/api/auth/login', ensureDatabaseConnection, async (req, res) => {
+app.post('/api/auth/login', ensurePersistentDatabaseConnection, async (req, res) => {
   const { email = '', password = '' } = req.body || {}
   const validationMessage = validateAuthInput(
     { name: 'player', email, password },
@@ -170,13 +180,13 @@ app.post('/api/auth/login', ensureDatabaseConnection, async (req, res) => {
   })
 })
 
-app.get('/api/auth/me', ensureDatabaseConnection, requireAuth, (req, res) => {
+app.get('/api/auth/me', ensurePersistentDatabaseConnection, requireAuth, (req, res) => {
   res.json({
     user: sanitizeUser(req.user),
   })
 })
 
-app.post('/api/scores', ensureDatabaseConnection, requireAuth, async (req, res) => {
+app.post('/api/scores', ensurePersistentDatabaseConnection, requireAuth, async (req, res) => {
   const {
     score,
     correctCount,
@@ -221,7 +231,7 @@ app.post('/api/scores', ensureDatabaseConnection, requireAuth, async (req, res) 
   })
 })
 
-app.get('/api/leaderboard', ensureDatabaseConnection, async (req, res) => {
+app.get('/api/leaderboard', ensurePersistentDatabaseConnection, async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50)
   const players = await listLeaderboardPlayers(limit)
 
@@ -241,6 +251,11 @@ app.get('/api/leaderboard', ensureDatabaseConnection, async (req, res) => {
 app.use((error, req, res, next) => {
   if (error.message === 'Origin not allowed by CORS') {
     res.status(403).json({ message: error.message })
+    return
+  }
+
+  if (error.code === 'DATABASE_UNAVAILABLE' || error.status === 503) {
+    res.status(503).json({ message: error.message })
     return
   }
 

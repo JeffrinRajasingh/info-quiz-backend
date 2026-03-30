@@ -2,7 +2,7 @@ const mongoose = require('mongoose')
 
 let connectionPromise = null
 let storageMode = 'database'
-const DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 10000
+const DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 30000
 
 function isMongoConnectionString(value) {
   return typeof value === 'string' && /^mongodb(\+srv)?:\/\//.test(value)
@@ -20,15 +20,20 @@ function shouldUseMemoryFallback() {
   return process.env.VERCEL === '1'
 }
 
+function createDatabaseUnavailableError(message) {
+  const error = new Error(message)
+  error.code = 'DATABASE_UNAVAILABLE'
+  error.status = 503
+  return error
+}
+
 function enableMemoryStore(reason) {
   storageMode = 'memory'
-  connectionPromise = Promise.resolve(null)
+  connectionPromise = null
 
   console.warn(
     `Database connection unavailable. Using the in-memory fallback store instead. ${reason}`,
   )
-
-  return connectionPromise
 }
 
 function getDatabaseOptions() {
@@ -44,11 +49,7 @@ function getDatabaseOptions() {
   }
 }
 
-async function connectToDatabase() {
-  if (storageMode === 'memory' && connectionPromise) {
-    return connectionPromise
-  }
-
+async function connectToDatabase({ allowMemoryFallback = shouldUseMemoryFallback() } = {}) {
   if (connectionPromise) {
     return connectionPromise
   }
@@ -56,20 +57,24 @@ async function connectToDatabase() {
   const mongoUri = process.env.MONGODB_URI?.trim()
 
   if (!mongoUri) {
-    if (shouldUseMemoryFallback()) {
-      return enableMemoryStore('MONGODB_URI is not configured for this deployment.')
+    if (allowMemoryFallback) {
+      enableMemoryStore('MONGODB_URI is not configured for this deployment.')
+      return null
     }
 
-    throw new Error('MONGODB_URI is not set. Add it to backend/.env before starting the server.')
+    throw createDatabaseUnavailableError(
+      'Database is not configured for this deployment. Add MONGODB_URI before using account features.',
+    )
   }
 
   if (!isMongoConnectionString(mongoUri)) {
-    if (shouldUseMemoryFallback()) {
-      return enableMemoryStore('MONGODB_URI is not a valid MongoDB connection string.')
+    if (allowMemoryFallback) {
+      enableMemoryStore('MONGODB_URI is not a valid MongoDB connection string.')
+      return null
     }
 
-    throw new Error(
-      'MONGODB_URI must start with mongodb:// or mongodb+srv://. Use your MongoDB Atlas connection string in backend/.env.',
+    throw createDatabaseUnavailableError(
+      'Database configuration is invalid for this deployment. Update MONGODB_URI and try again.',
     )
   }
 
@@ -91,14 +96,15 @@ async function connectToDatabase() {
     .catch((error) => {
       connectionPromise = null
 
-      if (shouldUseMemoryFallback()) {
-        return enableMemoryStore(
+      if (allowMemoryFallback) {
+        enableMemoryStore(
           `MongoDB Atlas could not be reached from this environment. ${error.message}`,
         )
+        return null
       }
 
-      throw new Error(
-        `Database connection failed. Check MONGODB_URI, Atlas network access, and database user credentials. ${error.message}`,
+      throw createDatabaseUnavailableError(
+        `Database connection failed. Check MongoDB Atlas network access and database credentials. ${error.message}`,
       )
     })
 
