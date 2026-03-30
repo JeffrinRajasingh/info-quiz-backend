@@ -4,14 +4,20 @@ const express = require('express')
 const cors = require('cors')
 const bcrypt = require('bcryptjs')
 const quizData = require('./quiz-data')
-const User = require('./models/User')
-const Score = require('./models/Score')
 const { createToken, requireAuth } = require('./middleware/auth')
-const { connectToDatabase } = require('./db')
+const { connectToDatabase, getStorageMode } = require('./db')
+const {
+  createScore,
+  createUser,
+  findUserByEmail,
+  getUserId,
+  listLeaderboardPlayers,
+  saveUser,
+} = require('./store')
 
 function sanitizeUser(user) {
   return {
-    id: user._id.toString(),
+    id: getUserId(user),
     name: user.name,
     email: user.email,
     bestScore: user.bestScore,
@@ -77,6 +83,7 @@ app.use(express.json())
 app.get('/', (req, res) => {
   res.json({
     message: 'Quiz backend is running',
+    storageMode: getStorageMode(),
     endpoints: [
       '/api/quiz',
       '/api/auth/signup',
@@ -110,7 +117,7 @@ app.post('/api/auth/signup', ensureDatabaseConnection, async (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase()
-  const existingUser = await User.findOne({ email: normalizedEmail })
+  const existingUser = await findUserByEmail(normalizedEmail)
 
   if (existingUser) {
     res.status(409).json({ message: 'An account with that email already exists.' })
@@ -118,7 +125,7 @@ app.post('/api/auth/signup', ensureDatabaseConnection, async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 10)
-  const user = await User.create({
+  const user = await createUser({
     name: name.trim(),
     email: normalizedEmail,
     passwordHash,
@@ -143,7 +150,7 @@ app.post('/api/auth/login', ensureDatabaseConnection, async (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase()
-  const user = await User.findOne({ email: normalizedEmail })
+  const user = await findUserByEmail(normalizedEmail)
 
   if (!user) {
     res.status(401).json({ message: 'Invalid email or password.' })
@@ -195,8 +202,8 @@ app.post('/api/scores', ensureDatabaseConnection, requireAuth, async (req, res) 
     return
   }
 
-  await Score.create({
-    user: req.user._id,
+  await createScore({
+    userId: getUserId(req.user),
     ...scorePayload,
   })
 
@@ -205,7 +212,7 @@ app.post('/api/scores', ensureDatabaseConnection, requireAuth, async (req, res) 
   req.user.totalScore += scorePayload.score
   req.user.totalCorrectAnswers += scorePayload.correctCount
   req.user.lastPlayedAt = new Date()
-  await req.user.save()
+  await saveUser(req.user)
 
   res.status(201).json({
     message: 'Score submitted successfully.',
@@ -216,9 +223,7 @@ app.post('/api/scores', ensureDatabaseConnection, requireAuth, async (req, res) 
 
 app.get('/api/leaderboard', ensureDatabaseConnection, async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50)
-  const players = await User.find({ gamesPlayed: { $gt: 0 } })
-    .sort({ bestScore: -1, lastPlayedAt: 1, createdAt: 1 })
-    .limit(limit)
+  const players = await listLeaderboardPlayers(limit)
 
   res.json({
     players: players.map((player, index) => ({

@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken')
-const User = require('../models/User')
+const { findUserById } = require('../store')
 
 function getJwtSecret() {
   const jwtSecret = process.env.JWT_SECRET
@@ -28,7 +28,7 @@ async function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, getJwtSecret())
-    const user = await User.findById(payload.sub)
+    const user = await findUserById(payload.sub)
 
     if (!user) {
       res.status(401).json({ message: 'User session is no longer valid.' })
