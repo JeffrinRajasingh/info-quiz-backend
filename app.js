@@ -38,9 +38,27 @@ function buildCorsOptions() {
     .map((origin) => origin.trim())
     .filter(Boolean)
 
+  function isAllowedVercelFrontend(origin) {
+    try {
+      const parsedOrigin = new URL(origin)
+
+      return (
+        parsedOrigin.protocol === 'https:' &&
+        parsedOrigin.hostname.endsWith('.vercel.app') &&
+        parsedOrigin.hostname.startsWith('info-quiz-frontend')
+      )
+    } catch {
+      return false
+    }
+  }
+
   return {
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        isAllowedVercelFrontend(origin)
+      ) {
         callback(null, true)
         return
       }
